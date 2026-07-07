@@ -127,6 +127,6 @@ module.exports = {
       text: 'Coins update every 30 seconds while you stay eligible.'
     });
 
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await interaction.reply({ embeds: [embed] });
   }
 };
