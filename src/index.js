@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const fs = require('node:fs');
+const http = require('node:http');
 const path = require('node:path');
 const {
   Client,
@@ -27,6 +28,7 @@ const client = new Client({
 });
 
 client.commands = new Collection();
+let healthServer;
 
 function loadCommands() {
   const commandsPath = path.join(__dirname, 'commands');
@@ -69,12 +71,47 @@ function loadEvents() {
 loadCommands();
 loadEvents();
 
+function startHealthServer() {
+  const port = process.env.PORT;
+  if (!port) {
+    return;
+  }
+
+  healthServer = http.createServer((req, res) => {
+    if (req.url === '/' || req.url === '/health') {
+      const payload = JSON.stringify({
+        ok: true,
+        service: 'discord-vc-coin-bot',
+        loggedIn: Boolean(client.user),
+        uptimeSeconds: Math.floor(process.uptime())
+      });
+
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload)
+      });
+      res.end(payload);
+      return;
+    }
+
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, error: 'Not found' }));
+  });
+
+  healthServer.listen(Number(port), '0.0.0.0', () => {
+    console.log(`[health] Listening on port ${port}`);
+  });
+}
+
+startHealthServer();
+
 process.on('unhandledRejection', (error) => {
   console.error('[process] Unhandled promise rejection:', error);
 });
 
 process.on('SIGINT', () => {
   console.log('[process] SIGINT received. Shutting down.');
+  healthServer?.close();
   client.destroy();
   process.exit(0);
 });
