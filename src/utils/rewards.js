@@ -16,12 +16,42 @@ function formatDuration(seconds) {
   const safeSeconds = Math.max(0, Number(seconds) || 0);
   const hours = Math.floor(safeSeconds / 3600);
   const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const remainingSeconds = Math.floor(safeSeconds % 60);
 
   if (hours > 0) {
     return `${hours}h ${minutes}m`;
   }
 
-  return `${minutes}m`;
+  if (minutes > 0) {
+    return `${minutes}m ${remainingSeconds}s`;
+  }
+
+  return `${remainingSeconds}s`;
+}
+
+function formatReason(reason) {
+  const labels = {
+    afk_channel: 'AFK channel',
+    alone: 'alone in VC',
+    eligible: 'earning',
+    muted_or_deafened: 'muted or deafened',
+    not_connected: 'not connected',
+    starting: 'starting'
+  };
+
+  return labels[reason] || String(reason || 'unknown').replaceAll('_', ' ');
+}
+
+function getReasonFix(reason) {
+  const fixes = {
+    afk_channel: 'Move out of the server AFK channel.',
+    alone: 'Join with at least one other real user.',
+    muted_or_deafened: 'Unmute and undeafen yourself, then wait for the next voice update.',
+    not_connected: 'Join a voice channel to start tracking.',
+    starting: 'Wait a few seconds for the session to initialize.'
+  };
+
+  return fixes[reason] || 'Check your voice state and try again.';
 }
 
 async function getCachedSettings(guildId) {
@@ -377,18 +407,26 @@ function getActiveSessionForUser(guildId, userId) {
   const elapsedSinceLastTick = Math.max(0, Math.floor((Date.now() - session.lastTickAt) / 1000));
   const totalSeconds = session.totalSeconds + elapsedSinceLastTick;
   const totalLiveSeconds = session.totalLiveSeconds + (session.live ? elapsedSinceLastTick : 0);
+  const pendingBaseSeconds = session.pendingBaseSeconds + (session.eligible ? elapsedSinceLastTick : 0);
+  const pendingLiveSeconds = session.pendingLiveSeconds + (session.live ? elapsedSinceLastTick : 0);
+  const connectedSeconds = Math.max(0, Math.floor((Date.now() - session.startedAt.getTime()) / 1000));
 
   return {
     guildId: session.guildId,
     userId: session.userId,
     channelId: session.channelId,
+    connectedSeconds,
     eligible: session.eligible,
     live: session.live,
     totalSeconds,
     totalLiveSeconds,
+    pendingBaseSeconds,
+    pendingLiveSeconds,
     coinsAwarded: session.coinsAwarded,
     duration: formatDuration(totalSeconds),
-    lastIneligibilityReason: session.lastIneligibilityReason
+    lastIneligibilityReason: session.lastIneligibilityReason,
+    reasonLabel: formatReason(session.lastIneligibilityReason),
+    reasonFix: getReasonFix(session.lastIneligibilityReason)
   };
 }
 
@@ -396,6 +434,8 @@ module.exports = {
   bootstrapExistingVoiceSessions,
   clearSettingsCache,
   formatDuration,
+  formatReason,
+  getReasonFix,
   getActiveSessionCount,
   getActiveSessionForUser,
   getActiveSessionsSnapshot,
