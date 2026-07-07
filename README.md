@@ -82,6 +82,7 @@ LIVE_BONUS_AMOUNT=1
 DAILY_BONUS_AMOUNT=5
 PGSSL=true
 API_SECRET=
+REGISTER_COMMANDS_ON_START=false
 ```
 
 `LIVE_BONUS_AMOUNT` is extra coins on top of the normal VC reward. With `VC_REWARD_AMOUNT=1` and `LIVE_BONUS_AMOUNT=1`, streaming earns 2 coins per reward interval.
@@ -150,6 +151,8 @@ npm run worker
 ```
 
 If `GUILD_ID` is set, commands deploy instantly to that server. If `GUILD_ID` is empty, commands deploy globally and can take up to 1 hour to appear.
+
+On hosts where you cannot run a one-off command, set `REGISTER_COMMANDS_ON_START=true` and redeploy once. You can set it back to `false` after the commands appear.
 
 ## User Commands
 
