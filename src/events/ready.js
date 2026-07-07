@@ -1,5 +1,6 @@
 const { Events, ActivityType } = require('discord.js');
 const database = require('../utils/database');
+const { registerCommands } = require('../utils/registerCommands');
 const rewards = require('../utils/rewards');
 
 module.exports = {
@@ -7,6 +8,12 @@ module.exports = {
   once: true,
   async execute(client) {
     await database.initDatabase();
+
+    if (process.env.REGISTER_COMMANDS_ON_START === 'true') {
+      const result = await registerCommands();
+      console.log(`[ready] Registered ${result.count} slash commands to ${result.scope}.`);
+    }
+
     rewards.bootstrapExistingVoiceSessions(client);
     rewards.startRewardProcessor(client);
 
