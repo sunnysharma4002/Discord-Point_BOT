@@ -21,7 +21,18 @@ module.exports = {
       }
     }
 
-    rewards.bootstrapExistingVoiceSessions(client);
+    if (typeof rewards.bootstrapExistingVoiceSessions === 'function') {
+      rewards.bootstrapExistingVoiceSessions(client);
+    } else {
+      console.warn(
+        `[ready] bootstrapExistingVoiceSessions is missing from rewards exports. Available exports: ${Object.keys(rewards).join(', ')}`
+      );
+    }
+
+    if (typeof rewards.startRewardProcessor !== 'function') {
+      throw new Error('startRewardProcessor is missing from rewards exports.');
+    }
+
     rewards.startRewardProcessor(client);
 
     client.user.setPresence({
