@@ -1,0 +1,26 @@
+{
+  "name": "discord-vc-coin-bot",
+  "version": "1.0.0",
+  "description": "Discord.js v14 voice-channel coin reward bot with PostgreSQL storage and Vercel-compatible API endpoints.",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js",
+    "worker": "node src/index.js",
+    "deploy:commands": "node src/deploy-commands.js",
+    "check": "node --check src/index.js && node --check src/deploy-commands.js && node --check api/health.js && node --check api/stats.js"
+  },
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "dependencies": {
+    "@discordjs/rest": "^2.4.2",
+    "discord-api-types": "^0.37.115",
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.7",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "vercel": "^39.2.0"
+  }
+}
