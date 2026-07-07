@@ -10,8 +10,15 @@ module.exports = {
     await database.initDatabase();
 
     if (process.env.REGISTER_COMMANDS_ON_START === 'true') {
-      const result = await registerCommands();
-      console.log(`[ready] Registered ${result.count} slash commands to ${result.scope}.`);
+      try {
+        const result = await registerCommands();
+        console.log(`[ready] Registered ${result.count} slash commands to ${result.scope}.`);
+      } catch (error) {
+        console.error('[ready] Could not register slash commands:', error);
+        console.error(
+          '[ready] Check that CLIENT_ID belongs to this bot, GUILD_ID is correct, and the bot was invited with the applications.commands scope.'
+        );
+      }
     }
 
     rewards.bootstrapExistingVoiceSessions(client);
