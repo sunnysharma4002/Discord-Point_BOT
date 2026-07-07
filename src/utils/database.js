@@ -13,7 +13,7 @@ function parseInteger(value, fallback, { min = 0 } = {}) {
 
 function getDefaultSettings() {
   return {
-    claimCost: parseInteger(process.env.CLAIM_COST, 10, { min: 1 }),
+    claimCost: parseInteger(process.env.CLAIM_COST, 100, { min: 1 }),
     rewardIntervalMinutes: parseInteger(process.env.VC_REWARD_INTERVAL_MINUTES, 5, { min: 1 }),
     rewardAmount: parseInteger(process.env.VC_REWARD_AMOUNT, 1, { min: 1 }),
     liveBonusAmount: parseInteger(process.env.LIVE_BONUS_AMOUNT, 1, { min: 0 }),
@@ -59,7 +59,7 @@ async function initDatabase() {
         reward_interval_minutes INTEGER NOT NULL DEFAULT 5 CHECK (reward_interval_minutes > 0),
         reward_amount INTEGER NOT NULL DEFAULT 1 CHECK (reward_amount > 0),
         live_bonus_amount INTEGER NOT NULL DEFAULT 1 CHECK (live_bonus_amount >= 0),
-        claim_cost INTEGER NOT NULL DEFAULT 10 CHECK (claim_cost > 0),
+        claim_cost INTEGER NOT NULL DEFAULT 100 CHECK (claim_cost > 0),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
