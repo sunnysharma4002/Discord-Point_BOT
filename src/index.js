@@ -70,6 +70,22 @@ function loadEvents() {
 loadCommands();
 loadEvents();
 
+client.once('clientReady', (readyClient) => {
+  console.log(`[login] Discord clientReady received as ${readyClient.user.tag}`);
+});
+
+client.once('ready', (readyClient) => {
+  console.log(`[login] Discord ready received as ${readyClient.user.tag}`);
+});
+
+client.on('shardError', (error) => {
+  console.error('[login] Discord shard error:', error);
+});
+
+client.on('shardDisconnect', (event, shardId) => {
+  console.warn(`[login] Discord shard ${shardId} disconnected with code ${event?.code || 'unknown'}`);
+});
+
 function startHealthServer() {
   const port = process.env.PORT;
   if (!port) {
@@ -115,6 +131,17 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
+console.log('[login] Starting Discord login...');
+
+const loginWatchdog = setTimeout(() => {
+  if (!client.isReady()) {
+    console.warn(`[login] Discord login still not ready after 60 seconds. WebSocket status: ${client.ws.status}`);
+  }
+}, 60_000);
+
+loginWatchdog.unref?.();
+
 client.login(process.env.DISCORD_TOKEN.trim()).catch((error) => {
+  clearTimeout(loginWatchdog);
   console.error('[login] Discord login failed:', error);
 });
