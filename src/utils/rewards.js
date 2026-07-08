@@ -33,8 +33,8 @@ function formatReason(reason) {
   const labels = {
     afk_channel: 'AFK channel',
     alone: 'alone in VC',
-    deafened: 'deafened',
     eligible: 'earning',
+    muted_or_deafened: 'muted or deafened',
     not_connected: 'not connected',
     starting: 'starting'
   };
@@ -46,7 +46,7 @@ function getReasonFix(reason) {
   const fixes = {
     afk_channel: 'Move out of the server AFK channel.',
     alone: 'Join with at least one other real user.',
-    deafened: 'Undeafen yourself, then wait for the next voice update.',
+    muted_or_deafened: 'Unmute and undeafen yourself, then wait for the next voice update.',
     not_connected: 'Join a voice channel to start tracking.',
     starting: 'Wait a few seconds for the session to initialize.'
   };
@@ -96,6 +96,8 @@ function getEligibilityDetails(voiceState) {
   }
 
   if (
+    voiceState.selfMute ||
+    voiceState.serverMute ||
     voiceState.selfDeaf ||
     voiceState.serverDeaf ||
     voiceState.suppress
@@ -103,7 +105,7 @@ function getEligibilityDetails(voiceState) {
     return {
       eligible: false,
       live: false,
-      reason: 'deafened'
+      reason: 'muted_or_deafened'
     };
   }
 
