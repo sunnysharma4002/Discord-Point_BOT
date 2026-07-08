@@ -46,7 +46,7 @@ module.exports = {
 
     fields.push({
       name: 'Earning',
-      value: 'Users earn coins while connected, unmuted, undeafened, outside the AFK channel, and not alone. Go Live streaming earns the configured bonus.'
+      value: 'Users earn coins while connected, undeafened, outside the AFK channel, and not alone. Muted users can still earn. Go Live streaming earns the configured bonus.'
     });
 
     const embed = new EmbedBuilder()
