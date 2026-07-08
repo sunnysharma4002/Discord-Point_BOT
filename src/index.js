@@ -19,6 +19,7 @@ for (const key of requiredEnv) {
 }
 
 const discordToken = process.env.DISCORD_TOKEN.trim();
+const discordApiTimeoutMs = Number.parseInt(process.env.DISCORD_API_TIMEOUT_MS || '10000', 10);
 
 const client = new Client({
   intents: [
@@ -49,13 +50,84 @@ const gatewayStatusNames = Object.fromEntries(
     .map(([key, value]) => [value, key])
 );
 
+function clearLoginTimeout() {
+  if (loginTimeout) {
+    clearTimeout(loginTimeout);
+    loginTimeout = undefined;
+  }
+}
+
+function scheduleLoginTimeout(attempt) {
+  clearLoginTimeout();
+
+  loginTimeout = setTimeout(() => {
+    if (attempt !== runtimeState.loginAttempts || client.isReady()) {
+      return;
+    }
+
+    runtimeState.loginTimeouts += 1;
+    runtimeState.discordStatus = 'login_timeout';
+    runtimeState.lastError = 'Discord ready event was not received within 90 seconds. Exiting so Render can restart the service.';
+    console.error('[login] Discord ready event was not received within 90 seconds. Exiting for a clean restart.');
+    process.exit(1);
+  }, 90_000);
+
+  loginTimeout.unref?.();
+}
+
 function markDiscordReady() {
   runtimeState.discordStatus = 'ready';
   runtimeState.readyAt = new Date().toISOString();
   runtimeState.lastError = null;
-  if (loginTimeout) {
-    clearTimeout(loginTimeout);
-    loginTimeout = undefined;
+  clearLoginTimeout();
+}
+
+async function checkDiscordApi(attempt) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), Number.isFinite(discordApiTimeoutMs) ? discordApiTimeoutMs : 10000);
+
+  try {
+    runtimeState.discordApiStatus = 'checking';
+    const response = await fetch('https://discord.com/api/v10/users/@me', {
+      headers: {
+        Authorization: `Bot ${discordToken}`,
+        'User-Agent': 'discord-vc-coin-bot (https://discord.com, 1.0.0)'
+      },
+      signal: controller.signal
+    });
+
+    if (attempt !== runtimeState.loginAttempts) {
+      return false;
+    }
+
+    if (response.status === 401) {
+      runtimeState.discordApiStatus = 'unauthorized';
+      runtimeState.lastError = 'Discord rejected DISCORD_TOKEN. Copy a fresh bot token from the Discord Developer Portal.';
+      return false;
+    }
+
+    if (!response.ok) {
+      runtimeState.discordApiStatus = `http_${response.status}`;
+      runtimeState.lastError = `Discord API check failed with HTTP ${response.status}.`;
+      return false;
+    }
+
+    const user = await response.json();
+    runtimeState.discordApiStatus = 'ok';
+    runtimeState.discordUser = user?.tag || user?.username || null;
+    return true;
+  } catch (error) {
+    if (attempt !== runtimeState.loginAttempts) {
+      return false;
+    }
+
+    runtimeState.discordApiStatus = error?.name === 'AbortError' ? 'timeout' : 'network_error';
+    runtimeState.lastError = error?.name === 'AbortError'
+      ? `Discord API check timed out after ${Number.isFinite(discordApiTimeoutMs) ? discordApiTimeoutMs : 10000}ms.`
+      : `Discord API check failed: ${error?.message || String(error)}`;
+    return false;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -185,41 +257,40 @@ process.on('SIGINT', () => {
 });
 
 function startDiscordLogin() {
-  if (loginTimeout) {
-    clearTimeout(loginTimeout);
-  }
+  clearLoginTimeout();
 
   runtimeState.discordStatus = 'logging_in';
   runtimeState.loginAttempts += 1;
   runtimeState.loginStartedAt = new Date().toISOString();
   runtimeState.lastError = null;
-  runtimeState.discordApiStatus = 'skipped';
+  runtimeState.discordApiStatus = 'pending';
   const attempt = runtimeState.loginAttempts;
 
-  client.login(discordToken)
+  checkDiscordApi(attempt)
+    .then((apiAvailable) => {
+      if (attempt !== runtimeState.loginAttempts) {
+        return;
+      }
+
+      if (!apiAvailable) {
+        runtimeState.discordStatus = 'api_check_failed';
+        console.error('[login] Discord API check failed:', runtimeState.lastError);
+        return;
+      }
+
+      scheduleLoginTimeout(attempt);
+      return client.login(discordToken);
+    })
     .catch((error) => {
       if (attempt !== runtimeState.loginAttempts) {
         return;
       }
 
+      clearLoginTimeout();
       runtimeState.discordStatus = 'login_failed';
       runtimeState.lastError = error?.message || String(error);
       console.error('[login] Discord login failed:', error);
     });
-
-  loginTimeout = setTimeout(() => {
-    if (attempt !== runtimeState.loginAttempts || client.isReady()) {
-      return;
-    }
-
-    runtimeState.loginTimeouts += 1;
-    runtimeState.discordStatus = 'login_timeout';
-    runtimeState.lastError = 'Discord ready event was not received within 90 seconds. Exiting so Render can restart the service.';
-    console.error('[login] Discord ready event was not received within 90 seconds. Exiting for a clean restart.');
-    process.exit(1);
-  }, 90_000);
-
-  loginTimeout.unref?.();
 }
 
 startDiscordLogin();
