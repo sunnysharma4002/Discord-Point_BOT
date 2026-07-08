@@ -184,18 +184,6 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
-function scheduleLoginRetry() {
-  setTimeout(() => {
-    if (client.isReady()) {
-      return;
-    }
-
-    console.warn('[login] Retrying Discord login after timeout.');
-    client.destroy();
-    startDiscordLogin();
-  }, 15_000).unref?.();
-}
-
 function startDiscordLogin() {
   if (loginTimeout) {
     clearTimeout(loginTimeout);
@@ -217,7 +205,6 @@ function startDiscordLogin() {
       runtimeState.discordStatus = 'login_failed';
       runtimeState.lastError = error?.message || String(error);
       console.error('[login] Discord login failed:', error);
-      scheduleLoginRetry();
     });
 
   loginTimeout = setTimeout(() => {
@@ -227,18 +214,10 @@ function startDiscordLogin() {
 
     runtimeState.loginTimeouts += 1;
     runtimeState.discordStatus = 'login_timeout';
-    runtimeState.lastError = 'Discord ready event was not received within 60 seconds. Retrying login shortly.';
-    console.warn('[login] Discord ready event was not received within 60 seconds.');
-
-    if (runtimeState.loginTimeouts >= 2) {
-      runtimeState.discordStatus = 'restarting';
-      runtimeState.lastError = 'Discord login timed out twice. Exiting so Render can restart the service.';
-      console.error('[login] Discord login timed out twice. Exiting for a clean restart.');
-      process.exit(1);
-    }
-
-    scheduleLoginRetry();
-  }, 60_000);
+    runtimeState.lastError = 'Discord ready event was not received within 90 seconds. Exiting so Render can restart the service.';
+    console.error('[login] Discord ready event was not received within 90 seconds. Exiting for a clean restart.');
+    process.exit(1);
+  }, 90_000);
 
   loginTimeout.unref?.();
 }
