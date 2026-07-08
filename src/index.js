@@ -21,6 +21,8 @@ for (const key of requiredEnv) {
 const discordToken = process.env.DISCORD_TOKEN.trim();
 const discordApiCheckOnStart = process.env.DISCORD_API_CHECK_ON_START === 'true';
 const discordApiTimeoutMs = Number.parseInt(process.env.DISCORD_API_TIMEOUT_MS || '10000', 10);
+const loginTimeoutMs = Number.parseInt(process.env.LOGIN_TIMEOUT_MS || '90000', 10);
+const exitOnLoginTimeout = process.env.EXIT_ON_LOGIN_TIMEOUT === 'true';
 
 const client = new Client({
   intents: [
@@ -60,18 +62,25 @@ function clearLoginTimeout() {
 
 function scheduleLoginTimeout(attempt) {
   clearLoginTimeout();
+  const timeoutMs = Number.isFinite(loginTimeoutMs) ? loginTimeoutMs : 90_000;
 
   loginTimeout = setTimeout(() => {
     if (attempt !== runtimeState.loginAttempts || client.isReady()) {
       return;
     }
 
+    loginTimeout = undefined;
     runtimeState.loginTimeouts += 1;
     runtimeState.discordStatus = 'login_timeout';
-    runtimeState.lastError = 'Discord ready event was not received within 90 seconds. Exiting so Render can restart the service.';
-    console.error('[login] Discord ready event was not received within 90 seconds. Exiting for a clean restart.');
-    process.exit(1);
-  }, 90_000);
+    runtimeState.lastError = exitOnLoginTimeout
+      ? `Discord ready event was not received within ${Math.round(timeoutMs / 1000)} seconds. Exiting so the host can restart the service.`
+      : `Discord ready event was not received within ${Math.round(timeoutMs / 1000)} seconds. Leaving the process online to avoid a restart loop.`;
+    console.error('[login]', runtimeState.lastError);
+
+    if (exitOnLoginTimeout) {
+      process.exit(1);
+    }
+  }, timeoutMs);
 
   loginTimeout.unref?.();
 }
@@ -229,6 +238,10 @@ function startHealthServer() {
         loginTimeouts: runtimeState.loginTimeouts,
         readyAt: runtimeState.readyAt,
         loginStartedAt: runtimeState.loginStartedAt,
+        loginElapsedSeconds: runtimeState.loginStartedAt
+          ? Math.floor((Date.now() - Date.parse(runtimeState.loginStartedAt)) / 1000)
+          : null,
+        loginTimeoutSeconds: Math.round((Number.isFinite(loginTimeoutMs) ? loginTimeoutMs : 90_000) / 1000),
         lastError: runtimeState.lastError,
         uptimeSeconds: Math.floor(process.uptime())
       });
