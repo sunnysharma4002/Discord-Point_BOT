@@ -23,6 +23,9 @@ const discordApiCheckOnStart = process.env.DISCORD_API_CHECK_ON_START === 'true'
 const discordApiTimeoutMs = Number.parseInt(process.env.DISCORD_API_TIMEOUT_MS || '10000', 10);
 const loginTimeoutMs = Number.parseInt(process.env.LOGIN_TIMEOUT_MS || '90000', 10);
 const exitOnLoginTimeout = process.env.EXIT_ON_LOGIN_TIMEOUT === 'true';
+const gatewayRestLookup = process.env.DISCORD_GATEWAY_REST_LOOKUP === 'true';
+const staticGatewayUrl = process.env.DISCORD_GATEWAY_URL || 'wss://gateway.discord.gg';
+const staticShardCount = Number.parseInt(process.env.DISCORD_SHARD_COUNT || '1', 10);
 
 const client = new Client({
   intents: [
@@ -32,6 +35,20 @@ const client = new Client({
   ],
   partials: [Partials.Channel]
 });
+
+if (!gatewayRestLookup) {
+  const shardCount = Number.isFinite(staticShardCount) && staticShardCount > 0 ? staticShardCount : 1;
+  client.ws.fetchGatewayInformation = async () => ({
+    url: staticGatewayUrl,
+    shards: shardCount,
+    session_start_limit: {
+      total: shardCount,
+      remaining: shardCount,
+      reset_after: 0,
+      max_concurrency: 1
+    }
+  });
+}
 
 client.commands = new Collection();
 let healthServer;
@@ -234,6 +251,8 @@ function startHealthServer() {
         discordUser: runtimeState.discordUser,
         gatewayStatus: client.ws.status,
         gatewayStatusName: gatewayStatusNames[client.ws.status] || 'Unknown',
+        gatewayRestLookup,
+        gatewayUrl: gatewayRestLookup ? 'discord_api' : staticGatewayUrl,
         loginAttempts: runtimeState.loginAttempts,
         loginTimeouts: runtimeState.loginTimeouts,
         readyAt: runtimeState.readyAt,
