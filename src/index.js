@@ -196,30 +196,6 @@ function scheduleLoginRetry() {
   }, 15_000).unref?.();
 }
 
-async function validateDiscordToken() {
-  runtimeState.discordApiStatus = 'checking';
-
-  const response = await fetch('https://discord.com/api/v10/users/@me', {
-    headers: {
-      Authorization: `Bot ${discordToken}`
-    },
-    signal: AbortSignal.timeout(10_000)
-  });
-
-  if (!response.ok) {
-    const body = await response.text().catch(() => '');
-    throw new Error(
-      `Discord token validation failed (${response.status} ${response.statusText}): ${body.slice(0, 200)}`
-    );
-  }
-
-  const user = await response.json();
-  runtimeState.discordApiStatus = 'ok';
-  runtimeState.discordUser = user.discriminator && user.discriminator !== '0'
-    ? `${user.username}#${user.discriminator}`
-    : user.username;
-}
-
 function startDiscordLogin() {
   if (loginTimeout) {
     clearTimeout(loginTimeout);
@@ -229,25 +205,16 @@ function startDiscordLogin() {
   runtimeState.loginAttempts += 1;
   runtimeState.loginStartedAt = new Date().toISOString();
   runtimeState.lastError = null;
+  runtimeState.discordApiStatus = 'skipped';
   const attempt = runtimeState.loginAttempts;
 
-  validateDiscordToken()
-    .then(() => {
-      if (attempt !== runtimeState.loginAttempts || client.isReady()) {
-        return undefined;
-      }
-
-      return client.login(discordToken);
-    })
+  client.login(discordToken)
     .catch((error) => {
       if (attempt !== runtimeState.loginAttempts) {
         return;
       }
 
       runtimeState.discordStatus = 'login_failed';
-      runtimeState.discordApiStatus = runtimeState.discordApiStatus === 'checking'
-        ? 'failed'
-        : runtimeState.discordApiStatus;
       runtimeState.lastError = error?.message || String(error);
       console.error('[login] Discord login failed:', error);
       scheduleLoginRetry();
