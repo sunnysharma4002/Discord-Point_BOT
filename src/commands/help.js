@@ -1,6 +1,15 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 const { hasAdminAccess } = require('../utils/permissions');
 
+function canShowAdminHelp(interaction) {
+  try {
+    return hasAdminAccess(interaction);
+  } catch (error) {
+    console.error('[help] Failed to check admin access:', error);
+    return false;
+  }
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('help')
@@ -21,7 +30,7 @@ module.exports = {
       }
     ];
 
-    if (hasAdminAccess(interaction)) {
+    if (canShowAdminHelp(interaction)) {
       fields.push({
         name: 'Admin',
         value: [
