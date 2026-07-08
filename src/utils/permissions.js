@@ -6,9 +6,14 @@ function hasAdminAccess(interaction) {
   }
 
   const adminRoleId = process.env.ADMIN_ROLE_ID;
-  const hasConfiguredRole = adminRoleId
-    ? interaction.member?.roles?.cache?.has(adminRoleId)
-    : false;
+  const memberRoles = interaction.member?.roles;
+  const hasConfiguredRole = Boolean(
+    adminRoleId &&
+    (
+      memberRoles?.cache?.has?.(adminRoleId) ||
+      (Array.isArray(memberRoles) && memberRoles.includes(adminRoleId))
+    )
+  );
 
   const hasDiscordAdmin = interaction.memberPermissions?.has(PermissionFlagsBits.Administrator);
   const canManageGuild = interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
