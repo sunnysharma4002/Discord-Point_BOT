@@ -30,9 +30,16 @@ client.commands = new Collection();
 let healthServer;
 const runtimeState = {
   discordStatus: 'starting',
+  loginStartedAt: null,
   lastError: null,
   readyAt: null
 };
+
+function markDiscordReady() {
+  runtimeState.discordStatus = 'ready';
+  runtimeState.readyAt = new Date().toISOString();
+  runtimeState.lastError = null;
+}
 
 function loadCommands() {
   const commandsPath = path.join(__dirname, 'commands');
@@ -75,11 +82,8 @@ function loadEvents() {
 loadCommands();
 loadEvents();
 
-client.once('clientReady', () => {
-  runtimeState.discordStatus = 'ready';
-  runtimeState.readyAt = new Date().toISOString();
-  runtimeState.lastError = null;
-});
+client.once('clientReady', markDiscordReady);
+client.once('ready', markDiscordReady);
 
 client.on('error', (error) => {
   runtimeState.discordStatus = 'error';
@@ -116,9 +120,11 @@ function startHealthServer() {
       const payload = JSON.stringify({
         ok: true,
         service: 'discord-vc-coin-bot',
-        loggedIn: Boolean(client.user),
+        loggedIn: client.isReady(),
         discordStatus: runtimeState.discordStatus,
+        gatewayStatus: client.ws.status,
         readyAt: runtimeState.readyAt,
+        loginStartedAt: runtimeState.loginStartedAt,
         lastError: runtimeState.lastError,
         uptimeSeconds: Math.floor(process.uptime())
       });
@@ -156,8 +162,17 @@ process.on('SIGINT', () => {
 });
 
 runtimeState.discordStatus = 'logging_in';
+runtimeState.loginStartedAt = new Date().toISOString();
 client.login(process.env.DISCORD_TOKEN).catch((error) => {
   runtimeState.discordStatus = 'login_failed';
   runtimeState.lastError = error?.message || String(error);
   console.error('[login] Discord login failed:', error);
 });
+
+setTimeout(() => {
+  if (!client.isReady() && runtimeState.discordStatus === 'logging_in') {
+    runtimeState.discordStatus = 'login_timeout';
+    runtimeState.lastError = 'Discord ready event was not received within 60 seconds. Check Render logs, DISCORD_TOKEN, and outbound gateway connectivity.';
+    console.warn('[login] Discord ready event was not received within 60 seconds.');
+  }
+}, 60_000).unref?.();
