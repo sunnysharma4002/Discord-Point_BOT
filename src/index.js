@@ -7,15 +7,18 @@ const {
   Client,
   Collection,
   GatewayIntentBits,
-  Partials
+  Partials,
+  Status
 } = require('discord.js');
 
 const requiredEnv = ['DISCORD_TOKEN', 'CLIENT_ID', 'DATABASE_URL'];
 for (const key of requiredEnv) {
-  if (!process.env[key]) {
+  if (!String(process.env[key] || '').trim()) {
     throw new Error(`${key} is required. Copy .env.example to .env and fill it in.`);
   }
 }
+
+const discordToken = process.env.DISCORD_TOKEN.trim();
 
 const client = new Client({
   intents: [
@@ -30,15 +33,27 @@ client.commands = new Collection();
 let healthServer;
 const runtimeState = {
   discordStatus: 'starting',
+  loginAttempts: 0,
   loginStartedAt: null,
   lastError: null,
   readyAt: null
 };
+let loginTimeout;
+
+const gatewayStatusNames = Object.fromEntries(
+  Object.entries(Status)
+    .filter(([, value]) => typeof value === 'number')
+    .map(([key, value]) => [value, key])
+);
 
 function markDiscordReady() {
   runtimeState.discordStatus = 'ready';
   runtimeState.readyAt = new Date().toISOString();
   runtimeState.lastError = null;
+  if (loginTimeout) {
+    clearTimeout(loginTimeout);
+    loginTimeout = undefined;
+  }
 }
 
 function loadCommands() {
@@ -123,6 +138,8 @@ function startHealthServer() {
         loggedIn: client.isReady(),
         discordStatus: runtimeState.discordStatus,
         gatewayStatus: client.ws.status,
+        gatewayStatusName: gatewayStatusNames[client.ws.status] || 'Unknown',
+        loginAttempts: runtimeState.loginAttempts,
         readyAt: runtimeState.readyAt,
         loginStartedAt: runtimeState.loginStartedAt,
         lastError: runtimeState.lastError,
@@ -161,18 +178,47 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
-runtimeState.discordStatus = 'logging_in';
-runtimeState.loginStartedAt = new Date().toISOString();
-client.login(process.env.DISCORD_TOKEN).catch((error) => {
-  runtimeState.discordStatus = 'login_failed';
-  runtimeState.lastError = error?.message || String(error);
-  console.error('[login] Discord login failed:', error);
-});
+function scheduleLoginRetry() {
+  setTimeout(() => {
+    if (client.isReady()) {
+      return;
+    }
 
-setTimeout(() => {
-  if (!client.isReady() && runtimeState.discordStatus === 'logging_in') {
-    runtimeState.discordStatus = 'login_timeout';
-    runtimeState.lastError = 'Discord ready event was not received within 60 seconds. Check Render logs, DISCORD_TOKEN, and outbound gateway connectivity.';
-    console.warn('[login] Discord ready event was not received within 60 seconds.');
+    console.warn('[login] Retrying Discord login after timeout.');
+    client.destroy();
+    startDiscordLogin();
+  }, 15_000).unref?.();
+}
+
+function startDiscordLogin() {
+  if (loginTimeout) {
+    clearTimeout(loginTimeout);
   }
-}, 60_000).unref?.();
+
+  runtimeState.discordStatus = 'logging_in';
+  runtimeState.loginAttempts += 1;
+  runtimeState.loginStartedAt = new Date().toISOString();
+  runtimeState.lastError = null;
+
+  client.login(discordToken).catch((error) => {
+    runtimeState.discordStatus = 'login_failed';
+    runtimeState.lastError = error?.message || String(error);
+    console.error('[login] Discord login failed:', error);
+    scheduleLoginRetry();
+  });
+
+  loginTimeout = setTimeout(() => {
+    if (client.isReady()) {
+      return;
+    }
+
+    runtimeState.discordStatus = 'login_timeout';
+    runtimeState.lastError = 'Discord ready event was not received within 60 seconds. Retrying login shortly.';
+    console.warn('[login] Discord ready event was not received within 60 seconds.');
+    scheduleLoginRetry();
+  }, 60_000);
+
+  loginTimeout.unref?.();
+}
+
+startDiscordLogin();
