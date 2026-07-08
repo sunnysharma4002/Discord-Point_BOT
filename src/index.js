@@ -7,8 +7,7 @@ const {
   Client,
   Collection,
   GatewayIntentBits,
-  Partials,
-  Status
+  Partials
 } = require('discord.js');
 
 const requiredEnv = ['DISCORD_TOKEN', 'CLIENT_ID', 'DATABASE_URL'];
@@ -17,15 +16,6 @@ for (const key of requiredEnv) {
     throw new Error(`${key} is required. Copy .env.example to .env and fill it in.`);
   }
 }
-
-const discordToken = process.env.DISCORD_TOKEN.trim();
-const discordApiCheckOnStart = process.env.DISCORD_API_CHECK_ON_START === 'true';
-const discordApiTimeoutMs = Number.parseInt(process.env.DISCORD_API_TIMEOUT_MS || '10000', 10);
-const loginTimeoutMs = Number.parseInt(process.env.LOGIN_TIMEOUT_MS || '90000', 10);
-const exitOnLoginTimeout = process.env.EXIT_ON_LOGIN_TIMEOUT === 'true';
-const gatewayRestLookup = process.env.DISCORD_GATEWAY_REST_LOOKUP === 'true';
-const staticGatewayUrl = process.env.DISCORD_GATEWAY_URL || 'wss://gateway.discord.gg';
-const staticShardCount = Number.parseInt(process.env.DISCORD_SHARD_COUNT || '1', 10);
 
 const client = new Client({
   intents: [
@@ -36,135 +26,8 @@ const client = new Client({
   partials: [Partials.Channel]
 });
 
-if (!gatewayRestLookup) {
-  const shardCount = Number.isFinite(staticShardCount) && staticShardCount > 0 ? staticShardCount : 1;
-  client.ws.fetchGatewayInformation = async () => ({
-    url: staticGatewayUrl,
-    shards: shardCount,
-    session_start_limit: {
-      total: shardCount,
-      remaining: shardCount,
-      reset_after: 0,
-      max_concurrency: 1
-    }
-  });
-}
-
 client.commands = new Collection();
 let healthServer;
-const runtimeState = {
-  discordStatus: 'starting',
-  discordApiStatus: 'not_checked',
-  discordUser: null,
-  loginAttempts: 0,
-  loginTimeouts: 0,
-  loginStartedAt: null,
-  lastError: null,
-  readyAt: null
-};
-let loginTimeout;
-
-const gatewayStatusNames = Object.fromEntries(
-  Object.entries(Status)
-    .filter(([, value]) => typeof value === 'number')
-    .map(([key, value]) => [value, key])
-);
-
-function clearLoginTimeout() {
-  if (loginTimeout) {
-    clearTimeout(loginTimeout);
-    loginTimeout = undefined;
-  }
-}
-
-function scheduleLoginTimeout(attempt) {
-  clearLoginTimeout();
-  const timeoutMs = Number.isFinite(loginTimeoutMs) ? loginTimeoutMs : 90_000;
-
-  loginTimeout = setTimeout(() => {
-    if (attempt !== runtimeState.loginAttempts || client.isReady()) {
-      return;
-    }
-
-    loginTimeout = undefined;
-    runtimeState.loginTimeouts += 1;
-    runtimeState.discordStatus = 'login_timeout';
-    runtimeState.lastError = exitOnLoginTimeout
-      ? `Discord ready event was not received within ${Math.round(timeoutMs / 1000)} seconds. Exiting so the host can restart the service.`
-      : `Discord ready event was not received within ${Math.round(timeoutMs / 1000)} seconds. Leaving the process online to avoid a restart loop.`;
-    console.error('[login]', runtimeState.lastError);
-
-    if (exitOnLoginTimeout) {
-      process.exit(1);
-    }
-  }, timeoutMs);
-
-  loginTimeout.unref?.();
-}
-
-function markDiscordReady() {
-  runtimeState.discordStatus = 'ready';
-  runtimeState.readyAt = new Date().toISOString();
-  runtimeState.lastError = null;
-  clearLoginTimeout();
-}
-
-function beginGatewayLogin(attempt) {
-  scheduleLoginTimeout(attempt);
-  return client.login(discordToken);
-}
-
-async function checkDiscordApi(attempt) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), Number.isFinite(discordApiTimeoutMs) ? discordApiTimeoutMs : 10000);
-
-  try {
-    runtimeState.discordApiStatus = 'checking';
-    const response = await fetch('https://discord.com/api/v10/users/@me', {
-      headers: {
-        Authorization: `Bot ${discordToken}`,
-        'User-Agent': 'discord-vc-coin-bot (https://discord.com, 1.0.0)'
-      },
-      signal: controller.signal
-    });
-
-    if (attempt !== runtimeState.loginAttempts) {
-      return false;
-    }
-
-    if (response.status === 401) {
-      runtimeState.discordApiStatus = 'unauthorized';
-      runtimeState.lastError = 'Discord rejected DISCORD_TOKEN. Copy a fresh bot token from the Discord Developer Portal.';
-      return false;
-    }
-
-    if (!response.ok) {
-      const retryAfter = response.headers.get('retry-after');
-      runtimeState.discordApiStatus = response.status === 429 ? 'rate_limited' : `http_${response.status}`;
-      runtimeState.lastError = response.status === 429
-        ? `Discord API token check was rate limited${retryAfter ? `; retry after ${retryAfter}s` : ''}. Continuing with gateway login.`
-        : `Discord API check returned HTTP ${response.status}. Continuing with gateway login.`;
-      return true;
-    }
-
-    const user = await response.json();
-    runtimeState.discordApiStatus = 'ok';
-    runtimeState.discordUser = user?.tag || user?.username || null;
-    return true;
-  } catch (error) {
-    if (attempt !== runtimeState.loginAttempts) {
-      return false;
-    }
-
-    runtimeState.discordApiStatus = error?.name === 'AbortError' ? 'timeout' : 'network_error';
-    runtimeState.lastError = error?.name === 'AbortError'
-      ? `Discord API check timed out after ${Number.isFinite(discordApiTimeoutMs) ? discordApiTimeoutMs : 10000}ms. Continuing with gateway login.`
-      : `Discord API check failed: ${error?.message || String(error)}. Continuing with gateway login.`;
-    return true;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
 
 function loadCommands() {
   const commandsPath = path.join(__dirname, 'commands');
@@ -207,33 +70,6 @@ function loadEvents() {
 loadCommands();
 loadEvents();
 
-client.once('clientReady', markDiscordReady);
-client.once('ready', markDiscordReady);
-
-client.on('error', (error) => {
-  runtimeState.discordStatus = 'error';
-  runtimeState.lastError = error?.message || String(error);
-  console.error('[client] Discord client error:', error);
-});
-
-client.on('shardError', (error) => {
-  runtimeState.discordStatus = 'shard_error';
-  runtimeState.lastError = error?.message || String(error);
-  console.error('[client] Discord shard error:', error);
-});
-
-client.on('shardDisconnect', (event, shardId) => {
-  runtimeState.discordStatus = 'disconnected';
-  runtimeState.lastError = `Shard ${shardId} disconnected with code ${event?.code || 'unknown'}`;
-  console.warn('[client] Discord shard disconnected:', runtimeState.lastError);
-});
-
-client.on('shardReconnecting', (shardId) => {
-  runtimeState.discordStatus = 'reconnecting';
-  runtimeState.lastError = `Shard ${shardId} is reconnecting`;
-  console.warn('[client] Discord shard reconnecting:', shardId);
-});
-
 function startHealthServer() {
   const port = process.env.PORT;
   if (!port) {
@@ -246,22 +82,6 @@ function startHealthServer() {
         ok: true,
         service: 'discord-vc-coin-bot',
         loggedIn: client.isReady(),
-        discordStatus: runtimeState.discordStatus,
-        discordApiStatus: runtimeState.discordApiStatus,
-        discordUser: runtimeState.discordUser,
-        gatewayStatus: client.ws.status,
-        gatewayStatusName: gatewayStatusNames[client.ws.status] || 'Unknown',
-        gatewayRestLookup,
-        gatewayUrl: gatewayRestLookup ? 'discord_api' : staticGatewayUrl,
-        loginAttempts: runtimeState.loginAttempts,
-        loginTimeouts: runtimeState.loginTimeouts,
-        readyAt: runtimeState.readyAt,
-        loginStartedAt: runtimeState.loginStartedAt,
-        loginElapsedSeconds: runtimeState.loginStartedAt
-          ? Math.floor((Date.now() - Date.parse(runtimeState.loginStartedAt)) / 1000)
-          : null,
-        loginTimeoutSeconds: Math.round((Number.isFinite(loginTimeoutMs) ? loginTimeoutMs : 90_000) / 1000),
-        lastError: runtimeState.lastError,
         uptimeSeconds: Math.floor(process.uptime())
       });
 
@@ -285,8 +105,6 @@ function startHealthServer() {
 startHealthServer();
 
 process.on('unhandledRejection', (error) => {
-  runtimeState.discordStatus = 'error';
-  runtimeState.lastError = error?.message || String(error);
   console.error('[process] Unhandled promise rejection:', error);
 });
 
@@ -297,44 +115,6 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
-function startDiscordLogin() {
-  clearLoginTimeout();
-
-  runtimeState.discordStatus = 'logging_in';
-  runtimeState.loginAttempts += 1;
-  runtimeState.loginStartedAt = new Date().toISOString();
-  runtimeState.lastError = null;
-  runtimeState.discordApiStatus = discordApiCheckOnStart ? 'pending' : 'skipped';
-  const attempt = runtimeState.loginAttempts;
-
-  const loginPromise = discordApiCheckOnStart
-    ? checkDiscordApi(attempt)
-      .then((canAttemptGatewayLogin) => {
-        if (attempt !== runtimeState.loginAttempts) {
-          return;
-        }
-
-        if (!canAttemptGatewayLogin) {
-          runtimeState.discordStatus = 'api_check_failed';
-          console.error('[login] Discord API check failed:', runtimeState.lastError);
-          return;
-        }
-
-        return beginGatewayLogin(attempt);
-      })
-    : beginGatewayLogin(attempt);
-
-  loginPromise
-    .catch((error) => {
-      if (attempt !== runtimeState.loginAttempts) {
-        return;
-      }
-
-      clearLoginTimeout();
-      runtimeState.discordStatus = 'login_failed';
-      runtimeState.lastError = error?.message || String(error);
-      console.error('[login] Discord login failed:', error);
-    });
-}
-
-startDiscordLogin();
+client.login(process.env.DISCORD_TOKEN.trim()).catch((error) => {
+  console.error('[login] Discord login failed:', error);
+});
