@@ -18,8 +18,8 @@ module.exports = {
     }
 
     const lines = await Promise.all(users.map(async (entry, index) => {
-      const member = await interaction.guild.members.fetch(entry.userId).catch(() => null);
-      const name = member ? member.user.username : `User ${entry.userId}`;
+      const discordUser = await interaction.client.users.fetch(entry.userId).catch(() => null);
+      const name = discordUser ? discordUser.username : `User ${entry.userId}`;
       return `**${index + 1}.** ${name} - ${entry.coins} coins`;
     }));
 
