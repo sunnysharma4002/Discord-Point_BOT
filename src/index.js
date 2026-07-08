@@ -107,9 +107,12 @@ async function checkDiscordApi(attempt) {
     }
 
     if (!response.ok) {
-      runtimeState.discordApiStatus = `http_${response.status}`;
-      runtimeState.lastError = `Discord API check failed with HTTP ${response.status}.`;
-      return false;
+      const retryAfter = response.headers.get('retry-after');
+      runtimeState.discordApiStatus = response.status === 429 ? 'rate_limited' : `http_${response.status}`;
+      runtimeState.lastError = response.status === 429
+        ? `Discord API token check was rate limited${retryAfter ? `; retry after ${retryAfter}s` : ''}. Continuing with gateway login.`
+        : `Discord API check returned HTTP ${response.status}. Continuing with gateway login.`;
+      return true;
     }
 
     const user = await response.json();
@@ -123,9 +126,9 @@ async function checkDiscordApi(attempt) {
 
     runtimeState.discordApiStatus = error?.name === 'AbortError' ? 'timeout' : 'network_error';
     runtimeState.lastError = error?.name === 'AbortError'
-      ? `Discord API check timed out after ${Number.isFinite(discordApiTimeoutMs) ? discordApiTimeoutMs : 10000}ms.`
-      : `Discord API check failed: ${error?.message || String(error)}`;
-    return false;
+      ? `Discord API check timed out after ${Number.isFinite(discordApiTimeoutMs) ? discordApiTimeoutMs : 10000}ms. Continuing with gateway login.`
+      : `Discord API check failed: ${error?.message || String(error)}. Continuing with gateway login.`;
+    return true;
   } finally {
     clearTimeout(timeout);
   }
@@ -267,12 +270,12 @@ function startDiscordLogin() {
   const attempt = runtimeState.loginAttempts;
 
   checkDiscordApi(attempt)
-    .then((apiAvailable) => {
+    .then((canAttemptGatewayLogin) => {
       if (attempt !== runtimeState.loginAttempts) {
         return;
       }
 
-      if (!apiAvailable) {
+      if (!canAttemptGatewayLogin) {
         runtimeState.discordStatus = 'api_check_failed';
         console.error('[login] Discord API check failed:', runtimeState.lastError);
         return;
