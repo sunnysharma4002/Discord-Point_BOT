@@ -33,7 +33,10 @@ client.commands = new Collection();
 let healthServer;
 const runtimeState = {
   discordStatus: 'starting',
+  discordApiStatus: 'not_checked',
+  discordUser: null,
   loginAttempts: 0,
+  loginTimeouts: 0,
   loginStartedAt: null,
   lastError: null,
   readyAt: null
@@ -137,9 +140,12 @@ function startHealthServer() {
         service: 'discord-vc-coin-bot',
         loggedIn: client.isReady(),
         discordStatus: runtimeState.discordStatus,
+        discordApiStatus: runtimeState.discordApiStatus,
+        discordUser: runtimeState.discordUser,
         gatewayStatus: client.ws.status,
         gatewayStatusName: gatewayStatusNames[client.ws.status] || 'Unknown',
         loginAttempts: runtimeState.loginAttempts,
+        loginTimeouts: runtimeState.loginTimeouts,
         readyAt: runtimeState.readyAt,
         loginStartedAt: runtimeState.loginStartedAt,
         lastError: runtimeState.lastError,
@@ -190,6 +196,30 @@ function scheduleLoginRetry() {
   }, 15_000).unref?.();
 }
 
+async function validateDiscordToken() {
+  runtimeState.discordApiStatus = 'checking';
+
+  const response = await fetch('https://discord.com/api/v10/users/@me', {
+    headers: {
+      Authorization: `Bot ${discordToken}`
+    },
+    signal: AbortSignal.timeout(10_000)
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(
+      `Discord token validation failed (${response.status} ${response.statusText}): ${body.slice(0, 200)}`
+    );
+  }
+
+  const user = await response.json();
+  runtimeState.discordApiStatus = 'ok';
+  runtimeState.discordUser = user.discriminator && user.discriminator !== '0'
+    ? `${user.username}#${user.discriminator}`
+    : user.username;
+}
+
 function startDiscordLogin() {
   if (loginTimeout) {
     clearTimeout(loginTimeout);
@@ -199,22 +229,47 @@ function startDiscordLogin() {
   runtimeState.loginAttempts += 1;
   runtimeState.loginStartedAt = new Date().toISOString();
   runtimeState.lastError = null;
+  const attempt = runtimeState.loginAttempts;
 
-  client.login(discordToken).catch((error) => {
-    runtimeState.discordStatus = 'login_failed';
-    runtimeState.lastError = error?.message || String(error);
-    console.error('[login] Discord login failed:', error);
-    scheduleLoginRetry();
-  });
+  validateDiscordToken()
+    .then(() => {
+      if (attempt !== runtimeState.loginAttempts || client.isReady()) {
+        return undefined;
+      }
+
+      return client.login(discordToken);
+    })
+    .catch((error) => {
+      if (attempt !== runtimeState.loginAttempts) {
+        return;
+      }
+
+      runtimeState.discordStatus = 'login_failed';
+      runtimeState.discordApiStatus = runtimeState.discordApiStatus === 'checking'
+        ? 'failed'
+        : runtimeState.discordApiStatus;
+      runtimeState.lastError = error?.message || String(error);
+      console.error('[login] Discord login failed:', error);
+      scheduleLoginRetry();
+    });
 
   loginTimeout = setTimeout(() => {
-    if (client.isReady()) {
+    if (attempt !== runtimeState.loginAttempts || client.isReady()) {
       return;
     }
 
+    runtimeState.loginTimeouts += 1;
     runtimeState.discordStatus = 'login_timeout';
     runtimeState.lastError = 'Discord ready event was not received within 60 seconds. Retrying login shortly.';
     console.warn('[login] Discord ready event was not received within 60 seconds.');
+
+    if (runtimeState.loginTimeouts >= 2) {
+      runtimeState.discordStatus = 'restarting';
+      runtimeState.lastError = 'Discord login timed out twice. Exiting so Render can restart the service.';
+      console.error('[login] Discord login timed out twice. Exiting for a clean restart.');
+      process.exit(1);
+    }
+
     scheduleLoginRetry();
   }, 60_000);
 
