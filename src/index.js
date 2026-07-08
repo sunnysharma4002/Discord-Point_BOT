@@ -19,6 +19,7 @@ for (const key of requiredEnv) {
 }
 
 const discordToken = process.env.DISCORD_TOKEN.trim();
+const discordApiCheckOnStart = process.env.DISCORD_API_CHECK_ON_START === 'true';
 const discordApiTimeoutMs = Number.parseInt(process.env.DISCORD_API_TIMEOUT_MS || '10000', 10);
 
 const client = new Client({
@@ -80,6 +81,11 @@ function markDiscordReady() {
   runtimeState.readyAt = new Date().toISOString();
   runtimeState.lastError = null;
   clearLoginTimeout();
+}
+
+function beginGatewayLogin(attempt) {
+  scheduleLoginTimeout(attempt);
+  return client.login(discordToken);
 }
 
 async function checkDiscordApi(attempt) {
@@ -266,24 +272,27 @@ function startDiscordLogin() {
   runtimeState.loginAttempts += 1;
   runtimeState.loginStartedAt = new Date().toISOString();
   runtimeState.lastError = null;
-  runtimeState.discordApiStatus = 'pending';
+  runtimeState.discordApiStatus = discordApiCheckOnStart ? 'pending' : 'skipped';
   const attempt = runtimeState.loginAttempts;
 
-  checkDiscordApi(attempt)
-    .then((canAttemptGatewayLogin) => {
-      if (attempt !== runtimeState.loginAttempts) {
-        return;
-      }
+  const loginPromise = discordApiCheckOnStart
+    ? checkDiscordApi(attempt)
+      .then((canAttemptGatewayLogin) => {
+        if (attempt !== runtimeState.loginAttempts) {
+          return;
+        }
 
-      if (!canAttemptGatewayLogin) {
-        runtimeState.discordStatus = 'api_check_failed';
-        console.error('[login] Discord API check failed:', runtimeState.lastError);
-        return;
-      }
+        if (!canAttemptGatewayLogin) {
+          runtimeState.discordStatus = 'api_check_failed';
+          console.error('[login] Discord API check failed:', runtimeState.lastError);
+          return;
+        }
 
-      scheduleLoginTimeout(attempt);
-      return client.login(discordToken);
-    })
+        return beginGatewayLogin(attempt);
+      })
+    : beginGatewayLogin(attempt);
+
+  loginPromise
     .catch((error) => {
       if (attempt !== runtimeState.loginAttempts) {
         return;
