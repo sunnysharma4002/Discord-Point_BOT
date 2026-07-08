@@ -7,7 +7,24 @@ module.exports = {
   name: Events.ClientReady,
   once: true,
   async execute(client) {
-    await database.initDatabase();
+    console.log(`[ready] Discord ready event received for ${client.user.tag}`);
+
+    client.user.setPresence({
+      activities: [
+        {
+          name: 'voice channels for coin rewards',
+          type: ActivityType.Watching
+        }
+      ],
+      status: 'online'
+    });
+
+    try {
+      await database.initDatabase();
+    } catch (error) {
+      console.error('[ready] Database initialization failed:', error);
+      return;
+    }
 
     if (process.env.REGISTER_COMMANDS_ON_START === 'true') {
       try {
@@ -21,29 +38,24 @@ module.exports = {
       }
     }
 
-    if (typeof rewards.bootstrapExistingVoiceSessions === 'function') {
-      rewards.bootstrapExistingVoiceSessions(client);
-    } else {
-      console.warn(
-        `[ready] bootstrapExistingVoiceSessions is missing from rewards exports. Available exports: ${Object.keys(rewards).join(', ')}`
-      );
+    try {
+      if (typeof rewards.bootstrapExistingVoiceSessions === 'function') {
+        rewards.bootstrapExistingVoiceSessions(client);
+      } else {
+        console.warn(
+          `[ready] bootstrapExistingVoiceSessions is missing from rewards exports. Available exports: ${Object.keys(rewards).join(', ')}`
+        );
+      }
+
+      if (typeof rewards.startRewardProcessor !== 'function') {
+        throw new Error('startRewardProcessor is missing from rewards exports.');
+      }
+
+      rewards.startRewardProcessor(client);
+    } catch (error) {
+      console.error('[ready] Reward system failed to start:', error);
+      return;
     }
-
-    if (typeof rewards.startRewardProcessor !== 'function') {
-      throw new Error('startRewardProcessor is missing from rewards exports.');
-    }
-
-    rewards.startRewardProcessor(client);
-
-    client.user.setPresence({
-      activities: [
-        {
-          name: 'voice channels for coin rewards',
-          type: ActivityType.Watching
-        }
-      ],
-      status: 'online'
-    });
 
     console.log(`[ready] Logged in as ${client.user.tag}`);
     console.log(`[ready] Loaded ${client.commands.size} slash commands.`);
