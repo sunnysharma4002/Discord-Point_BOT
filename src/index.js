@@ -20,7 +20,6 @@ for (const key of requiredEnv) {
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.DirectMessages
   ],
@@ -29,6 +28,11 @@ const client = new Client({
 
 client.commands = new Collection();
 let healthServer;
+const runtimeState = {
+  discordStatus: 'starting',
+  lastError: null,
+  readyAt: null
+};
 
 function loadCommands() {
   const commandsPath = path.join(__dirname, 'commands');
@@ -71,6 +75,36 @@ function loadEvents() {
 loadCommands();
 loadEvents();
 
+client.once('clientReady', () => {
+  runtimeState.discordStatus = 'ready';
+  runtimeState.readyAt = new Date().toISOString();
+  runtimeState.lastError = null;
+});
+
+client.on('error', (error) => {
+  runtimeState.discordStatus = 'error';
+  runtimeState.lastError = error?.message || String(error);
+  console.error('[client] Discord client error:', error);
+});
+
+client.on('shardError', (error) => {
+  runtimeState.discordStatus = 'shard_error';
+  runtimeState.lastError = error?.message || String(error);
+  console.error('[client] Discord shard error:', error);
+});
+
+client.on('shardDisconnect', (event, shardId) => {
+  runtimeState.discordStatus = 'disconnected';
+  runtimeState.lastError = `Shard ${shardId} disconnected with code ${event?.code || 'unknown'}`;
+  console.warn('[client] Discord shard disconnected:', runtimeState.lastError);
+});
+
+client.on('shardReconnecting', (shardId) => {
+  runtimeState.discordStatus = 'reconnecting';
+  runtimeState.lastError = `Shard ${shardId} is reconnecting`;
+  console.warn('[client] Discord shard reconnecting:', shardId);
+});
+
 function startHealthServer() {
   const port = process.env.PORT;
   if (!port) {
@@ -83,6 +117,9 @@ function startHealthServer() {
         ok: true,
         service: 'discord-vc-coin-bot',
         loggedIn: Boolean(client.user),
+        discordStatus: runtimeState.discordStatus,
+        readyAt: runtimeState.readyAt,
+        lastError: runtimeState.lastError,
         uptimeSeconds: Math.floor(process.uptime())
       });
 
@@ -106,6 +143,8 @@ function startHealthServer() {
 startHealthServer();
 
 process.on('unhandledRejection', (error) => {
+  runtimeState.discordStatus = 'error';
+  runtimeState.lastError = error?.message || String(error);
   console.error('[process] Unhandled promise rejection:', error);
 });
 
@@ -116,4 +155,9 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
-client.login(process.env.DISCORD_TOKEN);
+runtimeState.discordStatus = 'logging_in';
+client.login(process.env.DISCORD_TOKEN).catch((error) => {
+  runtimeState.discordStatus = 'login_failed';
+  runtimeState.lastError = error?.message || String(error);
+  console.error('[login] Discord login failed:', error);
+});
