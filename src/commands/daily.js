@@ -1,4 +1,5 @@
 const { SlashCommandBuilder } = require('discord.js');
+const accountAge = require('../utils/accountAge');
 const database = require('../utils/database');
 
 module.exports = {
@@ -8,6 +9,14 @@ module.exports = {
     .setDMPermission(false),
 
   async execute(interaction) {
+    if (!accountAge.isAccountOldEnough(interaction.user)) {
+      await interaction.reply({
+        content: accountAge.buildTooNewMessage(interaction.user),
+        ephemeral: true
+      });
+      return;
+    }
+
     const amount = database.getDefaultSettings().dailyBonusAmount;
     const result = await database.claimDaily(interaction.guildId, interaction.user.id, amount);
 
