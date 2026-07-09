@@ -1,4 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const accountAge = require('../utils/accountAge');
 const database = require('../utils/database');
 const rewards = require('../utils/rewards');
 
@@ -38,6 +39,7 @@ module.exports = {
     const totalLiveSeconds = user.totalLiveSeconds + currentLiveSeconds;
     const intervalSeconds = Math.max(60, settings.rewardIntervalMinutes * 60);
     const memberName = interaction.member?.displayName || interaction.user.username;
+    const canEarnCoins = accountAge.isAccountOldEnough(interaction.user);
 
     const statusColor = activeSession?.eligible
       ? 0x22a06b
@@ -81,7 +83,9 @@ module.exports = {
         : [
             `Status: **paused**`,
             `Reason: **${activeSession.reasonLabel}**`,
-            `Fix: ${activeSession.reasonFix}`
+            `Fix: ${activeSession.lastIneligibilityReason === 'account_too_new'
+              ? accountAge.buildTooNewMessage(interaction.user)
+              : activeSession.reasonFix}`
           ];
 
       embed.addFields({
@@ -113,11 +117,15 @@ module.exports = {
         });
       }
     } else {
+      const sessionHint = canEarnCoins
+        ? 'Join VC with at least one other real user to start earning.'
+        : accountAge.buildTooNewMessage(interaction.user);
+
       embed.addFields({
         name: 'Current Session',
         value: [
           'Status: **not in a voice channel**',
-          'Join VC with at least one other real user to start earning.'
+          sessionHint
         ].join('\n'),
         inline: false
       });
