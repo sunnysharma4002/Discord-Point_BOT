@@ -1,4 +1,5 @@
 const database = require('./database');
+const accountAge = require('./accountAge');
 
 const REWARD_TICK_MS = 30_000;
 const SETTINGS_CACHE_MS = 60_000;
@@ -31,6 +32,7 @@ function formatDuration(seconds) {
 
 function formatReason(reason) {
   const labels = {
+    account_too_new: `account under ${accountAge.formatAccountAgeRequirement()} old`,
     afk_channel: 'AFK channel',
     alone: 'alone in VC',
     eligible: 'earning',
@@ -44,6 +46,7 @@ function formatReason(reason) {
 
 function getReasonFix(reason) {
   const fixes = {
+    account_too_new: `Wait until your Discord account is at least ${accountAge.formatAccountAgeRequirement()} old.`,
     afk_channel: 'Move out of the server AFK channel.',
     alone: 'Join with at least one other real user.',
     deafened: 'Undeafen yourself, then wait for the next voice update.',
@@ -78,12 +81,20 @@ function clearSettingsCache(guildId) {
   settingsCache.clear();
 }
 
-function getEligibilityDetails(voiceState) {
+function getEligibilityDetails(voiceState, now = Date.now()) {
   if (!voiceState?.channel || !voiceState?.member || voiceState.member.user.bot) {
     return {
       eligible: false,
       live: false,
       reason: 'not_connected'
+    };
+  }
+
+  if (!accountAge.isAccountOldEnough(voiceState.member.user, now)) {
+    return {
+      eligible: false,
+      live: false,
+      reason: 'account_too_new'
     };
   }
 
@@ -122,8 +133,8 @@ function getEligibilityDetails(voiceState) {
   };
 }
 
-function updateSessionState(session, voiceState) {
-  const details = getEligibilityDetails(voiceState);
+function updateSessionState(session, voiceState, now = Date.now()) {
+  const details = getEligibilityDetails(voiceState, now);
   session.channelId = voiceState.channelId || session.channelId;
   session.eligible = details.eligible;
   session.live = details.live;
@@ -204,7 +215,7 @@ function createSession(voiceState, now = Date.now()) {
     coinsAwarded: 0
   };
 
-  updateSessionState(session, voiceState);
+  updateSessionState(session, voiceState, now);
   activeSessions.set(getSessionKey(session.guildId, session.userId), session);
   return session;
 }
@@ -225,7 +236,7 @@ async function refreshChannelSessions(channel, now = Date.now()) {
     }
 
     await applyElapsed(session, now);
-    updateSessionState(session, member.voice);
+    updateSessionState(session, member.voice, now);
   }
 }
 
@@ -278,7 +289,7 @@ async function handleVoiceStateUpdate(oldState, newState) {
   if (isConnected) {
     const session = existing || createSession(newState, now);
     await applyElapsed(session, now);
-    updateSessionState(session, newState);
+    updateSessionState(session, newState, now);
 
     if (oldState.channelId !== newState.channelId) {
       await refreshChannelSessions(oldState.channel, now);
@@ -302,7 +313,7 @@ async function processActiveSessions(client) {
       }
 
       await applyElapsed(session, now);
-      updateSessionState(session, member.voice);
+      updateSessionState(session, member.voice, now);
     } catch (error) {
       console.error(
         `[rewards] Failed to process session ${session.guildId}/${session.userId}:`,
