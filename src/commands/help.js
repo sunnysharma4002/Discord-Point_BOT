@@ -1,4 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const accountAge = require('../utils/accountAge');
 const { hasAdminAccess } = require('../utils/permissions');
 
 function canShowAdminHelp(interaction) {
@@ -46,7 +47,7 @@ module.exports = {
 
     fields.push({
       name: 'Earning',
-      value: 'Users earn coins while connected, undeafened, outside the AFK channel, and not alone. Muted users can still earn. Go Live streaming earns the configured bonus.'
+      value: `Users earn coins while connected, undeafened, outside the AFK channel, not alone, and using a Discord account at least ${accountAge.formatAccountAgeRequirement()} old. Muted users can still earn. Go Live streaming earns the configured bonus.`
     });
 
     const embed = new EmbedBuilder()
