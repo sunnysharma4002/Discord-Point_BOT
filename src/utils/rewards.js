@@ -3,6 +3,7 @@ const accountAge = require('./accountAge');
 
 const REWARD_TICK_MS = 30_000;
 const SETTINGS_CACHE_MS = 60_000;
+const NON_REWARD_CHANNEL_IDS = new Set(['1488593387442671616']);
 
 const activeSessions = new Map();
 const settingsCache = new Map();
@@ -35,6 +36,7 @@ function formatReason(reason) {
     account_too_new: `account under ${accountAge.formatAccountAgeRequirement()} old`,
     afk_channel: 'AFK channel',
     alone: 'alone in VC',
+    excluded_channel: 'rewards disabled in this channel',
     eligible: 'earning',
     deafened: 'deafened',
     not_connected: 'not connected',
@@ -50,6 +52,7 @@ function getReasonFix(reason) {
     afk_channel: 'Move out of the server AFK channel.',
     alone: 'Join with at least one other real user.',
     deafened: 'Undeafen yourself, then wait for the next voice update.',
+    excluded_channel: 'Move to another voice channel to earn coins.',
     not_connected: 'Join a voice channel to start tracking.',
     starting: 'Wait a few seconds for the session to initialize.'
   };
@@ -87,6 +90,14 @@ function getEligibilityDetails(voiceState, now = Date.now()) {
       eligible: false,
       live: false,
       reason: 'not_connected'
+    };
+  }
+
+  if (NON_REWARD_CHANNEL_IDS.has(voiceState.channelId)) {
+    return {
+      eligible: false,
+      live: false,
+      reason: 'excluded_channel'
     };
   }
 
