@@ -4,6 +4,8 @@ A Discord.js v14 bot that rewards users with coins for staying in voice channels
 
 The worker stores all balances, keys, settings, voice totals, and transactions in PostgreSQL, so it works with Vercel-compatible providers such as Neon, Supabase, or Railway Postgres. No production state is stored in local files.
 
+When deployed as a Render Web Service, the bot also exposes a lightweight `/health` endpoint so uptime monitors can keep the free service awake.
+
 ## Important Vercel Note
 
 This bot cannot fully run on Vercel only.
@@ -21,12 +23,16 @@ Use this split instead:
 - Rewards eligible users by interval, for example 1 coin every 5 minutes.
 - Gives a configurable extra streaming bonus while a user is Go Live streaming.
 - Blocks common AFK farming cases:
-  - no coins while muted or deafened,
+  - no coins while deafened,
   - no coins while alone in the channel,
   - no coins inside the server AFK channel,
+  - no coins inside voice channel `1488593387442671616`,
+  - no coins when the Discord account is under 60 days old,
   - bot users are ignored.
 - Stores balances, keys, settings, transactions, total VC time, and total live time in PostgreSQL.
 - Slash commands for users and admins.
+- `/balance` is public so other users can see coin/point totals.
+- `/help` shows admin commands only to users who have admin access.
 - Vercel-compatible API endpoints for health and stats.
 
 ## Project Structure
@@ -52,6 +58,7 @@ src/
     ready.js
     voiceStateUpdate.js
   utils/
+    accountAge.js
     database.js
     keyManager.js
     permissions.js
@@ -104,6 +111,12 @@ Use a hosted PostgreSQL database:
 
 Create a database, copy the connection string, and set it as `DATABASE_URL`.
 
+Recommended free setup:
+
+- Bot host: Render Free Web Service.
+- Database: Neon PostgreSQL free project.
+- Keep-alive: UptimeRobot or another HTTP monitor pinging `/health`.
+
 The bot automatically creates these tables on startup:
 
 - `users`
@@ -120,8 +133,8 @@ The bot automatically creates these tables on startup:
 4. Copy the bot token into `DISCORD_TOKEN`.
 5. Copy the application ID into `CLIENT_ID`.
 6. Enable these bot intents:
-   - Server Members Intent: required for member and role checks.
-   - Voice State access: used by the `GuildVoiceStates` gateway intent in code.
+   - Server Members Intent: not required by the current bot. Leave it off unless you add member-list features later.
+   - Voice state tracking is handled by the bot's `GuildVoiceStates` gateway intent in code.
    - Message Content Intent: not required for this slash-command-only bot, but enable it only if you later add prefix/message commands.
 
 ## Invite the Bot
@@ -156,15 +169,17 @@ On hosts where you cannot run a one-off command, set `REGISTER_COMMANDS_ON_START
 
 ## User Commands
 
-- `/balance` - show your coin balance, total VC time, and live time.
+- `/balance` - publicly show your coin balance, claim status, total VC time, live time, and current earning status.
 - `/leaderboard` - show the top users by coins.
 - `/claim` - spend coins to claim a key. The key is sent by DM.
 - `/daily` - claim daily bonus coins.
-- `/help` - show all commands.
+- `/help` - show available user commands. Admin commands are shown only to users with admin access.
 
 ## Admin Commands
 
 Admin access is granted to users with `ADMIN_ROLE_ID`, Administrator, or Manage Server.
+
+Normal users can still see public slash commands in Discord, but admin command details are hidden from `/help`, and the admin commands reject users without permission.
 
 - `/addkey key:<text>` - add a new claimable key.
 - `/addcoin user:<user> amount:<number>` - add coins.
@@ -183,12 +198,68 @@ Default example:
 A user is eligible only when:
 
 - they are in a voice or stage channel,
-- they are not self-muted, server-muted, self-deafened, or server-deafened,
-- they are not suppressed as a stage audience member,
+- their Discord account is at least 60 days old,
+- they are not self-deafened or server-deafened,
 - they are not in the server AFK channel,
+- they are not in voice channel `1488593387442671616`,
 - at least one other non-bot user is in the same channel.
 
-The reward loop runs every 30 seconds and pays out once enough eligible seconds have accumulated.
+The reward loop runs every 30 seconds and pays out once enough eligible seconds have accumulated. Daily bonus claims also require a Discord account that is at least 60 days old.
+
+## Deploy Free on Render
+
+Render Free Web Services can sleep when they do not receive traffic. This project includes a small health server so the bot can be hosted as a free Web Service and kept awake with an HTTP monitor.
+
+1. Push this project to GitHub.
+2. In Render, create a new **Web Service**.
+3. Connect the GitHub repository.
+4. Use these settings:
+
+```text
+Runtime: Node
+Build Command: npm install
+Start Command: npm run worker
+Instance Type: Free
+```
+
+5. Add environment variables:
+
+```env
+DISCORD_TOKEN=
+CLIENT_ID=
+GUILD_ID=
+DATABASE_URL=
+ADMIN_ROLE_ID=
+CLAIM_COST=100
+VC_REWARD_INTERVAL_MINUTES=5
+VC_REWARD_AMOUNT=1
+LIVE_BONUS_AMOUNT=1
+DAILY_BONUS_AMOUNT=5
+PGSSL=true
+NODE_VERSION=20
+REGISTER_COMMANDS_ON_START=true
+```
+
+6. Deploy the service.
+7. Open the Render URL plus `/health`, for example:
+
+```text
+https://your-render-app.onrender.com/health
+```
+
+Expected response:
+
+```json
+{
+  "ok": true,
+  "service": "discord-vc-coin-bot",
+  "loggedIn": true
+}
+```
+
+8. Add that `/health` URL to UptimeRobot or another uptime monitor with a 5-minute HTTP check.
+
+Free hosting is useful for testing and small servers, but the best always-online setup is still a paid worker/VPS because free services can restart or sleep.
 
 ## Deploy the Bot Worker on Railway
 
@@ -217,7 +288,9 @@ npm run worker
 npm run deploy:commands
 ```
 
-## Deploy the Bot Worker on Render
+## Deploy Always-On on Render
+
+Use this option if you want the bot to stay online without relying on keep-alive pings.
 
 1. Create a new Background Worker on Render.
 2. Connect the GitHub repository.
