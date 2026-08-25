@@ -10,6 +10,8 @@ const {
   Partials
 } = require('discord.js');
 
+const database = require('./utils/database');
+
 const requiredEnv = ['DISCORD_TOKEN', 'CLIENT_ID', 'DATABASE_URL'];
 for (const key of requiredEnv) {
   if (!String(process.env[key] || '').trim()) {
@@ -74,8 +76,27 @@ client.once('clientReady', (readyClient) => {
   console.log(`[login] Discord clientReady received as ${readyClient.user.tag}`);
 });
 
-client.once('ready', (readyClient) => {
+client.once('ready', async (readyClient) => {
   console.log(`[login] Discord ready received as ${readyClient.user.tag}`);
+
+  try {
+    await database.initDatabase();
+    const deleted = await database.cleanupOldTransactions(7);
+    console.log(`[cleanup] Deleted ${deleted} coin_transactions older than 7 days on startup.`);
+  } catch (error) {
+    console.error('[cleanup] Startup cleanup failed:', error.message);
+  }
+
+  const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+  const cleanupTimer = setInterval(async () => {
+    try {
+      const deleted = await database.cleanupOldTransactions(7);
+      console.log(`[cleanup] Deleted ${deleted} coin_transactions older than 7 days.`);
+    } catch (error) {
+      console.error('[cleanup] Scheduled cleanup failed:', error.message);
+    }
+  }, CLEANUP_INTERVAL_MS);
+  cleanupTimer.unref?.();
 });
 
 client.on('shardError', (error) => {
@@ -128,6 +149,7 @@ process.on('SIGINT', () => {
   console.log('[process] SIGINT received. Shutting down.');
   healthServer?.close();
   client.destroy();
+  database.closeDatabase();
   process.exit(0);
 });
 
