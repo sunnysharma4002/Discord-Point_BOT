@@ -1,0 +1,169 @@
+require('dotenv').config();
+
+const fs = require('node:fs');
+const http = require('node:http');
+const path = require('node:path');
+const {
+  Client,
+  Collection,
+  GatewayIntentBits,
+  Partials
+} = require('discord.js');
+
+const database = require('./utils/database');
+
+const requiredEnv = ['DISCORD_TOKEN', 'CLIENT_ID', 'DATABASE_URL'];
+for (const key of requiredEnv) {
+  if (!String(process.env[key] || '').trim()) {
+    throw new Error(`${key} is required. Copy .env.example to .env and fill it in.`);
+  }
+}
+
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.DirectMessages
+  ],
+  partials: [Partials.Channel]
+});
+
+client.commands = new Collection();
+let healthServer;
+
+function loadCommands() {
+  const commandsPath = path.join(__dirname, 'commands');
+  const commandFiles = fs.readdirSync(commandsPath).filter((file) => file.endsWith('.js'));
+
+  for (const file of commandFiles) {
+    const filePath = path.join(commandsPath, file);
+    const command = require(filePath);
+
+    if (!command.data || !command.execute) {
+      console.warn(`[commands] Skipping ${file}: missing data or execute export.`);
+      continue;
+    }
+
+    client.commands.set(command.data.name, command);
+  }
+}
+
+function loadEvents() {
+  const eventsPath = path.join(__dirname, 'events');
+  const eventFiles = fs.readdirSync(eventsPath).filter((file) => file.endsWith('.js'));
+
+  for (const file of eventFiles) {
+    const filePath = path.join(eventsPath, file);
+    const event = require(filePath);
+
+    if (!event.name || !event.execute) {
+      console.warn(`[events] Skipping ${file}: missing name or execute export.`);
+      continue;
+    }
+
+    if (event.once) {
+      client.once(event.name, (...args) => event.execute(...args, client));
+    } else {
+      client.on(event.name, (...args) => event.execute(...args, client));
+    }
+  }
+}
+
+loadCommands();
+loadEvents();
+
+client.once('clientReady', (readyClient) => {
+  console.log(`[login] Discord clientReady received as ${readyClient.user.tag}`);
+});
+
+client.once('ready', async (readyClient) => {
+  console.log(`[login] Discord ready received as ${readyClient.user.tag}`);
+
+  try {
+    await database.initDatabase();
+    const deleted = await database.cleanupOldTransactions(7);
+    console.log(`[cleanup] Deleted ${deleted} coin_transactions older than 7 days on startup.`);
+  } catch (error) {
+    console.error('[cleanup] Startup cleanup failed:', error.message);
+  }
+
+  const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+  const cleanupTimer = setInterval(async () => {
+    try {
+      const deleted = await database.cleanupOldTransactions(7);
+      console.log(`[cleanup] Deleted ${deleted} coin_transactions older than 7 days.`);
+    } catch (error) {
+      console.error('[cleanup] Scheduled cleanup failed:', error.message);
+    }
+  }, CLEANUP_INTERVAL_MS);
+  cleanupTimer.unref?.();
+});
+
+client.on('shardError', (error) => {
+  console.error('[login] Discord shard error:', error);
+});
+
+client.on('shardDisconnect', (event, shardId) => {
+  console.warn(`[login] Discord shard ${shardId} disconnected with code ${event?.code || 'unknown'}`);
+});
+
+function startHealthServer() {
+  const port = process.env.PORT;
+  if (!port) {
+    return;
+  }
+
+  healthServer = http.createServer((req, res) => {
+    if (req.url === '/' || req.url === '/health') {
+      const payload = JSON.stringify({
+        ok: true,
+        service: 'discord-vc-coin-bot',
+        loggedIn: client.isReady(),
+        uptimeSeconds: Math.floor(process.uptime())
+      });
+
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload)
+      });
+      res.end(payload);
+      return;
+    }
+
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: false, error: 'Not found' }));
+  });
+
+  healthServer.listen(Number(port), '0.0.0.0', () => {
+    console.log(`[health] Listening on port ${port}`);
+  });
+}
+
+startHealthServer();
+
+process.on('unhandledRejection', (error) => {
+  console.error('[process] Unhandled promise rejection:', error);
+});
+
+process.on('SIGINT', () => {
+  console.log('[process] SIGINT received. Shutting down.');
+  healthServer?.close();
+  client.destroy();
+  database.closeDatabase();
+  process.exit(0);
+});
+
+console.log('[login] Starting Discord login...');
+
+const loginWatchdog = setTimeout(() => {
+  if (!client.isReady()) {
+    console.warn(`[login] Discord login still not ready after 60 seconds. WebSocket status: ${client.ws.status}`);
+  }
+}, 60_000);
+
+loginWatchdog.unref?.();
+
+client.login(process.env.DISCORD_TOKEN.trim()).catch((error) => {
+  clearTimeout(loginWatchdog);
+  console.error('[login] Discord login failed:', error);
+});
