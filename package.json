@@ -1,26 +1,36 @@
 {
-  "name": "discord-vc-coin-bot",
-  "version": "1.0.0",
-  "description": "Discord.js v14 voice-channel coin reward bot with PostgreSQL storage and Vercel-compatible API endpoints.",
-  "main": "src/index.js",
-  "type": "commonjs",
+  "name": "discord-music-bot",
+  "version": "1.1.0",
+  "description": "Discord music bot with YouTube and Spotify support using Discord.js v14",
+  "main": "index.js",
+  "type": "module",
   "scripts": {
-    "start": "node src/index.js",
-    "worker": "node src/index.js",
-    "deploy:commands": "node src/deploy-commands.js",
-    "check": "node --check src/index.js && node --check src/deploy-commands.js && node --check api/health.js && node --check api/stats.js"
+    "start": "node index.js",
+    "deploy": "node src/deploy-commands.js",
+    "postinstall": "node scripts/fix-youtube-sr.mjs && node scripts/setup-ytdlp.mjs"
   },
   "engines": {
-    "node": ">=18.17.0"
+    "node": ">=20.18.1"
   },
   "dependencies": {
-    "@discordjs/rest": "^2.4.2",
-    "discord-api-types": "^0.37.115",
-    "discord.js": "^14.16.3",
-    "dotenv": "^16.4.7",
-    "pg": "^8.13.1"
+    "@discordjs/voice": "^0.19.2",
+    "@noble/ciphers": "^2.3.0",
+    "discord.js": "^14.27.0",
+    "dotenv": "^16.4.5",
+    "ffmpeg-static": "^5.2.0",
+    "libsodium-wrappers": "^0.7.15",
+    "opusscript": "^0.0.8",
+    "prism-media": "^1.3.5",
+    "youtube-dl-exec": "^3.1.12",
+    "youtube-sr": "^4.3.11",
+    "youtubei.js": "^13.1.0"
   },
-  "devDependencies": {
-    "vercel": "^39.2.0"
-  }
+  "keywords": [
+    "discord",
+    "music",
+    "bot",
+    "youtube",
+    "spotify"
+  ],
+  "license": "MIT"
 }

@@ -1,335 +1,217 @@
-# Discord VC Coin Bot
+# Discord Music Bot
 
-A Discord.js v14 bot that rewards users with coins for staying in voice channels, gives extra coins while they are Go Live streaming, and lets users spend coins to claim one-time keys.
-
-The worker stores all balances, keys, settings, voice totals, and transactions in PostgreSQL, so it works with Vercel-compatible providers such as Neon, Supabase, or Railway Postgres. No production state is stored in local files.
-
-When deployed as a Render Web Service, the bot also exposes a lightweight `/health` endpoint so uptime monitors can keep the free service awake.
-
-## Important Vercel Note
-
-This bot cannot fully run on Vercel only.
-
-Discord bots require a long-running Gateway WebSocket connection to receive `voiceStateUpdate` events. Vercel serverless functions are short-lived, can sleep between requests, and are not designed to keep persistent WebSocket bot sessions online. If you run the Discord worker as a Vercel function, it will eventually stop receiving voice events and coin tracking will be unreliable.
-
-Use this split instead:
-
-- Vercel: optional API/dashboard endpoints, included here as `/api/health` and `/api/stats`.
-- Railway, Render, Fly.io, Replit, or VPS: the always-on Discord bot worker, started with `npm run worker`.
+A modular Discord music bot built with Discord.js v14, supporting YouTube, Spotify, and SoundCloud sources.
 
 ## Features
 
-- Tracks joins, leaves, moves, disconnects, mute/deafen changes, and streaming state changes through Discord voice state events.
-- Rewards eligible users by interval, for example 1 coin every 5 minutes.
-- Gives a configurable extra streaming bonus while a user is Go Live streaming.
-- Blocks common AFK farming cases:
-  - no coins while deafened,
-  - no coins while alone in the channel,
-  - no coins inside the server AFK channel,
-  - no coins inside voice channel `1488593387442671616`,
-  - no coins when the Discord account is under 60 days old,
-  - bot users are ignored.
-- Stores balances, keys, settings, transactions, total VC time, and total live time in PostgreSQL.
-- Slash commands for users and admins.
-- `/balance` is public so other users can see coin/point totals.
-- `/help` shows admin commands only to users who have admin access.
-- Vercel-compatible API endpoints for health and stats.
+- **Slash Commands**: `/play`, `/skip`, `/stop`, `/pause`, `/resume`, `/queue`, `/nowplaying`
+- **YouTube**: URL playback and search queries via `@distube/ytdl-core` + `play-dl`
+- **Spotify**: Track, album, and playlist links — auto-resolved to YouTube streams
+- **SoundCloud**: Track and playlist links — auto-resolved to YouTube streams
+- **JioSaavn**: Track, album, and search — direct streaming (no YouTube needed)
+- **Per-server queue**: Independent queue per guild with pagination
+- **Loop modes**: off / track / queue (via code — extendable to slash command)
+- **Auto-leave**: Leaves voice channel 30s after all humans depart
+- **Stuck-track guard**: Auto-skips tracks that fail to start within 60s
+
+## Required npm Dependencies
+
+```
+@discordjs/voice   — Discord voice connection & audio pipeline
+@distube/ytdl-core — Reliable YouTube audio streaming (fork of ytdl-core)
+discord.js         — Discord API wrapper (v14)
+dotenv             — Environment variable management
+play-dl            — YouTube search + Spotify metadata resolution
+undici             — HTTP client for HLS live streams
+```
+
+## Setup Instructions
+
+### 1. Prerequisites
+
+- Node.js >= 20.18.1 (Node 22 LTS recommended). **Node 18 will not work** — the dependency stack requires Node 20+.
+- A Discord application with a bot user
+- Bot must have these permissions in your test server:
+  - `Connect`, `Speak`, `Use Voice Activity` (voice)
+  - `Send Messages`, `Embed Links` (text)
+  - `Use Application Commands` (slash commands)
+
+> **Hosting panel:** in Pterodactyl / Bot-Hosting, set the Node.js version in the **Startup** tab to `20` or `22` (Node 18 is EOL). If the bot crashes on boot with `ReferenceError: File is not defined` or `undici` errors, the panel is running Node 18 — change the version there.
+
+### 2. Create Discord Bot & Get Credentials
+
+1. Go to https://discord.com/developers/applications
+2. Create a new application → Bot → Reset Token → Copy token
+3. OAuth2 → Copy the **Client ID**
+4. Go to your Discord server → right-click server name → Copy Server ID (this is GUILD_ID)
+   - If you don't see "Copy Server ID", enable Developer Mode in User Settings → Advanced
+
+### 3. Invite Bot to Server
+
+Visit this URL (replace CLIENT_ID):
+```
+https://discord.com/api/oauth2/authorize?client_id=CLIENT_ID&permissions=3169280&scope=bot%20applications.commands
+```
+
+### 4. Install & Configure
+
+```bash
+cd "D:\Downloads\Discord music bot"
+npm install
+
+# Copy and fill environment variables
+copy .env.example .env
+# Edit .env and paste your DISCORD_TOKEN, CLIENT_ID, and GUILD_ID
+```
+
+### 5. Deploy Slash Commands
+
+```bash
+npm run deploy
+```
+
+This registers the slash commands once. If `GUILD_ID` is set in `.env`, commands appear instantly in that server. Without it, global registration takes up to 1 hour.
+
+> **Note:** The bot also auto-registers commands on startup as a fallback.
+
+**Stuck with stale commands?** The bot includes a `/deploy` command (server admins only). Once any command is registered, run `/deploy` in your server to force a refresh without touching the console. If the old behavior persists, restart your Discord client (Ctrl/Cmd + R).
+
+### 6. Start the Bot
+
+```bash
+npm start
+```
+
+You should see:
+```
+[READY] YourBot#1234 is online.
+[INFO]  Connected to 1 guild(s).
+[INFO]  Slash commands registered.
+```
+
+### 7. (Optional) Spotify API Credentials
+
+For more reliable Spotify metadata resolution, add Spotify API credentials:
+1. Go to https://developer.spotify.com/dashboard
+2. Create a new app
+3. Copy the Client ID and Client Secret into `.env`:
+```
+SPOTIFY_CLIENT_ID=your_client_id
+SPOTIFY_CLIENT_SECRET=your_client_secret
+```
+Without these, Spotify links fall back to embed-page scraping (still works, but less reliable).
+
+### 8. (Optional) Vercel Relay — Bypass YouTube IP Blocks
+
+If YouTube blocks your hosting IP, deploy the Vercel relay to route requests through Vercel's edge network:
+
+1. **Deploy to Vercel:**
+```bash
+cd vercel-relay
+vercel deploy --prod
+```
+
+2. **Update `.env`:**
+```env
+VERCEL_RELAY_URL=https://your-project.vercel.app
+VERCEL_RELAY_KEY=your-secret-key  # optional
+```
+
+3. **What it covers:**
+- YouTube search queries (bypasses search blocks)
+- YouTube audio streaming (bypasses streaming blocks)
+- Video metadata lookups
+
+The relay uses `youtubei.js` (YouTube's official API client) to fetch data from Vercel's IP instead of your bot's IP.
+
+### 9. (Optional) JioSaavn Support
+
+JioSaavn is an Indian music streaming service. The bot can search and play songs directly from JioSaavn:
+- **Search**: `/play <song name>` will search JioSaavn if no YouTube results are found
+- **Direct URL**: Paste a JioSaavn song or album URL directly
+- **No API key needed** — uses the public JioSaavn API
+
+Example JioSaavn URLs:
+- Song: `https://www.jiosaavn.com/song/kesariya/AgIAQyBeWlI`
+- Album: `https://www.jiosaavn.com/album/brahmastra/xq4v9ZFC9iA_`
+
+### 10. (Optional) YouTube Cookies
+
+To avoid YouTube rate limits, generate cookies:
+1. Log into YouTube in your browser
+2. Open DevTools → Application → Cookies → copy the `youtube.com` cookies
+3. Paste into `.env` as `YOUTUBE_COOKIES` (JSON format)
+
+See: https://github.com/play-dl/play_dl/blob/master/play-dl/YouTube/README.md#using-cookies
+
+## Audio Pipeline
+
+```
+User runs /play <query>
+       │
+        ├─ Spotify URL? ──► resolveSpotify() ──► fetch metadata ──► search YouTube per track
+        │
+        ├─ SoundCloud URL? ──► resolveSoundCloud() ──► yt-dlp metadata ──► search YouTube per track
+        │
+        ├─ JioSaavn URL / query? ──► resolveJioSaavn() ──► JioSaavn API ──► direct stream
+        │
+        └─ YouTube URL / text query ──► resolveYouTube() ──► play-dl search
+                                       │
+                                       ▼
+                            Track object: { title, url, duration, thumbnail, isLive, source }
+                                       │
+                                       ▼
+                            Player.playTrack(track)
+                                       │
+                    ┌──────────────────┴──────────────────┐
+                    │                                     │
+              YouTube stream                        Spotify-resolved
+              via @distube/ytdl-core                (same — YouTube URL)
+                    │                                     │
+                    └──────────────────┬──────────────────┘
+                                       ▼
+                            createAudioResource(stream)
+                                       │
+                                       ▼
+                            audioPlayer.play(resource)
+                                       │
+                                       ▼
+                            VoiceConnection → Discord voice channel
+                                       │
+                            On AudioPlayerStatus.Idle ──► play next in queue
+```
 
 ## Project Structure
 
-```text
+```
+index.js                  — Root entry (hosting panels start here)
 src/
-  index.js
-  deploy-commands.js
-  commands/
-    addcoin.js
-    addkey.js
-    balance.js
-    claim.js
-    daily.js
-    help.js
-    leaderboard.js
-    removecoin.js
-    resetuser.js
-    setrate.js
-    stats.js
-  events/
-    interactionCreate.js
-    ready.js
-    voiceStateUpdate.js
-  utils/
-    accountAge.js
-    database.js
-    keyManager.js
-    permissions.js
-    rewards.js
-api/
-  health.js
-  stats.js
+├── index.js              — Bot client, intents, voice cleanup, interaction dispatch
+├── deploy-commands.js    — One-time slash command registration
+├── commands/
+│   ├── handler.js        — Auto-discovers and registers slash commands
+│   ├── play.js           — /play command (YouTube + Spotify)
+│   ├── skip.js / stop.js / pause.js / resume.js
+│   ├── queue.js          — Paginated queue embed
+│   └── nowplaying.js     — /nowplaying
+├── voice/
+│   └── Player.js         — Per-guild voice connection + queue manager
+└── spotify/
+    └── resolver.js       — Spotify → YouTube resolution service
+.env.example              — Template for environment variables
 package.json
-.env.example
-vercel.json
-README.md
 ```
 
-## Environment Variables
-
-Copy `.env.example` to `.env` for local development.
-
-```env
-DISCORD_TOKEN=
-CLIENT_ID=
-GUILD_ID=
-DATABASE_URL=
-ADMIN_ROLE_ID=
-CLAIM_COST=100
-VC_REWARD_INTERVAL_MINUTES=5
-VC_REWARD_AMOUNT=1
-LIVE_BONUS_AMOUNT=1
-DAILY_BONUS_AMOUNT=5
-PGSSL=true
-API_SECRET=
-REGISTER_COMMANDS_ON_START=false
-```
-
-`LIVE_BONUS_AMOUNT` is extra coins on top of the normal VC reward. With `VC_REWARD_AMOUNT=1` and `LIVE_BONUS_AMOUNT=1`, streaming earns 2 coins per reward interval.
-
-`API_SECRET` is optional. If set, call `/api/stats` with:
-
-```bash
-Authorization: Bearer YOUR_API_SECRET
-```
-
-## Database Setup
-
-Use a hosted PostgreSQL database:
-
-- Neon PostgreSQL
-- Supabase PostgreSQL
-- Railway PostgreSQL
-- Render PostgreSQL
-
-Create a database, copy the connection string, and set it as `DATABASE_URL`.
-
-Recommended free setup:
-
-- Bot host: Render Free Web Service.
-- Database: Neon PostgreSQL free project.
-- Keep-alive: UptimeRobot or another HTTP monitor pinging `/health`.
-
-The bot automatically creates these tables on startup:
-
-- `users`
-- `keys`
-- `guild_settings`
-- `coin_transactions`
-- `voice_sessions`
-
-## Discord Developer Portal Setup
-
-1. Go to the Discord Developer Portal.
-2. Create an application.
-3. Open the Bot page and create a bot.
-4. Copy the bot token into `DISCORD_TOKEN`.
-5. Copy the application ID into `CLIENT_ID`.
-6. Enable these bot intents:
-   - Server Members Intent: not required by the current bot. Leave it off unless you add member-list features later.
-   - Voice state tracking is handled by the bot's `GuildVoiceStates` gateway intent in code.
-   - Message Content Intent: not required for this slash-command-only bot, but enable it only if you later add prefix/message commands.
-
-## Invite the Bot
-
-Use this URL format:
-
-```text
-https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&scope=bot%20applications.commands&permissions=84992
-```
-
-Replace `YOUR_CLIENT_ID` with your application ID.
-
-The included permission number covers View Channels, Send Messages, Embed Links, and Read Message History. The bot does not need to join voice channels because it only listens for voice state events.
-
-For quick testing, you can use Discord's OAuth2 URL Generator with:
-
-- Scopes: `bot`, `applications.commands`
-- Bot permissions: View Channels, Send Messages, Embed Links, Read Message History
-
-## Local Setup
-
-```bash
-npm install
-cp .env.example .env
-npm run deploy:commands
-npm run worker
-```
-
-If `GUILD_ID` is set, commands deploy instantly to that server. If `GUILD_ID` is empty, commands deploy globally and can take up to 1 hour to appear.
-
-On hosts where you cannot run a one-off command, set `REGISTER_COMMANDS_ON_START=true` and redeploy once. You can set it back to `false` after the commands appear.
-
-## User Commands
-
-- `/balance` - publicly show your coin balance, claim status, total VC time, live time, and current earning status.
-- `/leaderboard` - show the top users by coins.
-- `/claim` - spend coins to claim a key. The key is sent by DM.
-- `/daily` - claim daily bonus coins.
-- `/help` - show available user commands. Admin commands are shown only to users with admin access.
-
-## Admin Commands
-
-Admin access is granted to users with `ADMIN_ROLE_ID`, Administrator, or Manage Server.
-
-Normal users can still see public slash commands in Discord, but admin command details are hidden from `/help`, and the admin commands reject users without permission.
-
-- `/addkey key:<text>` - add a new claimable key.
-- `/addcoin user:<user> amount:<number>` - add coins.
-- `/removecoin user:<user> amount:<number>` - remove coins.
-- `/resetuser user:<user>` - reset a user's coins to 0.
-- `/setrate` - update reward interval, base reward, live bonus, or claim cost.
-- `/stats` - show bot statistics for the server.
-
-## Reward Rules
-
-Default example:
-
-- Normal eligible VC: 1 coin every 5 minutes.
-- Streaming eligible VC: 1 base coin plus 1 live bonus coin every 5 minutes.
-
-A user is eligible only when:
-
-- they are in a voice or stage channel,
-- their Discord account is at least 60 days old,
-- they are not self-deafened or server-deafened,
-- they are not in the server AFK channel,
-- they are not in voice channel `1488593387442671616`,
-- at least one other non-bot user is in the same channel.
-
-The reward loop runs every 30 seconds and pays out once enough eligible seconds have accumulated. Daily bonus claims also require a Discord account that is at least 60 days old.
-
-## Deploy Free on Render
-
-Render Free Web Services can sleep when they do not receive traffic. This project includes a small health server so the bot can be hosted as a free Web Service and kept awake with an HTTP monitor.
-
-1. Push this project to GitHub.
-2. In Render, create a new **Web Service**.
-3. Connect the GitHub repository.
-4. Use these settings:
-
-```text
-Runtime: Node
-Build Command: npm install
-Start Command: npm run worker
-Instance Type: Free
-```
-
-5. Add environment variables:
-
-```env
-DISCORD_TOKEN=
-CLIENT_ID=
-GUILD_ID=
-DATABASE_URL=
-ADMIN_ROLE_ID=
-CLAIM_COST=100
-VC_REWARD_INTERVAL_MINUTES=5
-VC_REWARD_AMOUNT=1
-LIVE_BONUS_AMOUNT=1
-DAILY_BONUS_AMOUNT=5
-PGSSL=true
-NODE_VERSION=20
-REGISTER_COMMANDS_ON_START=true
-```
-
-6. Deploy the service.
-7. Open the Render URL plus `/health`, for example:
-
-```text
-https://your-render-app.onrender.com/health
-```
-
-Expected response:
-
-```json
-{
-  "ok": true,
-  "service": "discord-vc-coin-bot",
-  "loggedIn": true
-}
-```
-
-8. Add that `/health` URL to UptimeRobot or another uptime monitor with a 5-minute HTTP check.
-
-Free hosting is useful for testing and small servers, but the best always-online setup is still a paid worker/VPS because free services can restart or sleep.
-
-## Deploy the Bot Worker on Railway
-
-1. Push this project to GitHub.
-2. Create a new Railway project from the GitHub repository.
-3. Add these environment variables in Railway:
-   - `DISCORD_TOKEN`
-   - `CLIENT_ID`
-   - `GUILD_ID`
-   - `DATABASE_URL`
-   - `ADMIN_ROLE_ID`
-   - `CLAIM_COST`
-   - `VC_REWARD_INTERVAL_MINUTES`
-   - `VC_REWARD_AMOUNT`
-   - `LIVE_BONUS_AMOUNT`
-4. Set the start command:
-
-```bash
-npm run worker
-```
-
-5. Deploy.
-6. Run slash command deployment once from your local machine or a Railway shell:
-
-```bash
-npm run deploy:commands
-```
-
-## Deploy Always-On on Render
-
-Use this option if you want the bot to stay online without relying on keep-alive pings.
-
-1. Create a new Background Worker on Render.
-2. Connect the GitHub repository.
-3. Build command:
-
-```bash
-npm install
-```
-
-4. Start command:
-
-```bash
-npm run worker
-```
-
-5. Add the same environment variables listed above.
-6. Deploy.
-
-## Deploy the API on Vercel
-
-This is optional. It does not run the Discord worker.
-
-1. Import the GitHub repository into Vercel.
-2. Set Vercel environment variables:
-   - `DATABASE_URL`
-   - `GUILD_ID`
-   - `PGSSL=true`
-   - `API_SECRET` if you want to protect `/api/stats`
-3. Deploy.
-
-Available endpoints:
-
-- `GET /api/health` - confirms the API can connect to the database.
-- `GET /api/stats` - returns stored stats for `GUILD_ID`.
-- `GET /api/stats?guildId=SERVER_ID` - returns stats for a specific server.
-
-## Production Notes
-
-- Keep `DISCORD_TOKEN` only on the worker host unless your Vercel dashboard/API later needs Discord API calls.
-- Do not use JSON files for keys or balances in production on Vercel. Serverless file storage is temporary.
-- If users cannot receive claimed keys, ask them to enable DMs from server members. The bot refunds the claim if the DM fails.
-- Hosted PostgreSQL providers usually require SSL. Leave `PGSSL=true` unless you are using a local database.
+## Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| `Required option "query" not found` / "You need to provide a song name or link" | Stale slash commands — set `GUILD_ID` in `.env`, run `npm run deploy`, then run `/deploy` in your server (or restart Discord) |
+| "Nothing is playing" | Ensure bot is in the same voice channel as you |
+| Commands not appearing | Run `npm run deploy` and check `GUILD_ID` is correct |
+| YouTube rate limit (HTTP 429) | Add a `YOUTUBE_COOKIE` to `.env` |
+| Spotify tracks not found | The embed scraper is rate-limited; wait a few seconds between requests |
+| Bot leaves immediately | Check `Connect`/`Speak` permissions in the voice channel |
+| No audio (bot joins but silent) | Run the bot once and check the `@discordjs/voice` dependency report at startup — `opusscript` and `libsodium-wrappers` must be present |
+
+> **Global vs guild commands:** If `GUILD_ID` is empty, commands register **globally** and can take up to 1 hour to appear. Set `GUILD_ID` to a test server for instant registration.
